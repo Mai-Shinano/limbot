@@ -17,6 +17,7 @@ pub struct Config {
     pub openai_token: String,
     pub openai_model: String,
     pub memory_file: PathBuf,
+    pub master_acct: String,
     pub instruction: String,
 }
 

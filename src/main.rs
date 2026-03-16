@@ -47,6 +47,7 @@ async fn main() -> anyhow::Result<()> {
         &config.openai_url,
         &config.openai_token,
         &config.openai_model,
+        &config.master_acct,
         &config.instruction,
     );
     let app = Arc::new(app);

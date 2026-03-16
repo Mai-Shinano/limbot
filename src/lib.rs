@@ -19,7 +19,7 @@ const SYSTEM_PROMPT_TEMPLATE: &str = r#"# 入力
 入力は、以下のスキーマに従って与えられます。
 
 ```json
-{"type":"object","properties":{"context":{"type":"array","description":"ここまでの会話内容","items":{"type":"object","properties":{"name":{"type":"string","description":"発言者のdisplay_name"},"content":{"type":"string","description":"発言内容"}}}},"person":{"type":"object","description":"会話相手に関する情報","properties":{"id":{"type":"string","description":"会話相手のid"},"name":{"type":"string","description":"会話相手のdisplay_name"},"affinity":{"type":"integer","description":"会話相手への好感度","minimum":-5,"maximum":5},"talk_count":{"type":"integer","description":"過去にこの相手と会話した回数"},"memo":{"type":"string","description":"会話相手に関するメモ"}}},"datetime":{"type":"string","description":"現在時刻"},"content":{"type":"string","description":"現在の会話内容"}}}
+{"type":"object","properties":{"context":{"type":"array","description":"ここまでの会話内容","items":{"type":"object","properties":{"name":{"type":"string","description":"発言者のdisplay_name"},"content":{"type":"string","description":"発言内容"}}}},"person":{"type":"object","description":"会話相手に関する情報","properties":{"id":{"type":"string","description":"会話相手のid"},"name":{"type":"string","description":"会話相手の名前"},"is_master":{"type":"boolean","description":"trueなら相手はマスター、falseなら相手は一般ユーザー"},"affinity":{"type":"integer","description":"会話相手への好感度","minimum":-5,"maximum":5},"talk_count":{"type":"integer","description":"過去にこの相手と会話した回数"},"memo":{"type":"string","description":"会話相手に関するメモ"}}},"datetime":{"type":"string","description":"現在時刻"},"content":{"type":"string","description":"現在の会話内容"}}}
 ```
 
 # 出力
@@ -41,6 +41,7 @@ pub struct ContextMessage {
 struct Person {
     id: String,
     name: String,
+    is_master: bool,
     affinity: i8,
     talk_count: u32,
     memo: String,
@@ -89,6 +90,7 @@ pub struct App {
     base_url: String,
     token: String,
     model: String,
+    master_acct: String,
     instruction: String,
     memory_file: PathBuf,
     memory: RwLock<memory::Memory>,
@@ -100,6 +102,7 @@ impl App {
         base_url: &str,
         token: &str,
         model: &str,
+        master_acct: &str,
         instruction: &str,
     ) -> Self {
         let client = Client::new();
@@ -114,6 +117,7 @@ impl App {
             base_url: base_url.to_owned(),
             token: token.to_owned(),
             model: model.to_owned(),
+            master_acct: master_acct.to_owned(),
             instruction: instruction.to_owned(),
         }
     }
@@ -234,6 +238,7 @@ impl App {
         let person = Person {
             id: account_id.to_owned(),
             name: display_name.to_owned(),
+            is_master: account_id == self.master_acct,
             affinity: person.affinity.affinity(),
             talk_count: person.talk_count,
             memo: person.memo.clone(),
