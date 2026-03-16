@@ -1,0 +1,8 @@
+sns = "Pleroma"
+sns_url = "https://example.net"
+# sns_token = "leave unset to generate one"
+openai_url = "https://openrouter.ai/api/v1"
+openai_token = "sk-or-v1-..."
+openai_model = "google/gemini-3.1-flash-lite-preview"
+memory_file = "memory.json"
+instruction = """instruction to an LLM goes here..."""
