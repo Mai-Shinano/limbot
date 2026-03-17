@@ -5,6 +5,7 @@
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use anyhow::{Context, bail};
+use chrono::Timelike;
 use env_logger::Env;
 use llmbot::{AICore, ContextMessage};
 use reqwest::Client;
@@ -50,9 +51,30 @@ async fn main() -> anyhow::Result<()> {
             .random_post_visibility
             .clone()
             .unwrap_or_else(|| String::from("home"));
+        let quiet_hours = match (
+            config.random_post_quiet_start_hour,
+            config.random_post_quiet_end_hour,
+        ) {
+            (Some(start), Some(end)) if start < 24 && end < 24 => Some((start, end)),
+            (Some(_), Some(_)) => {
+                log::warn!(
+                    "random_post_quiet_start_hour/end_hour must be in 0..=23. quiet hours disabled"
+                );
+                None
+            }
+            _ => None,
+        };
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(interval_sec)).await;
+
+                if let Some((start, end)) = quiet_hours {
+                    let hour = chrono::Local::now().hour() as u8;
+                    if is_quiet_hour(hour, start, end) {
+                        continue;
+                    }
+                }
+
                 match ai.generate_random_post().await {
                     Ok(text) => {
                         if text.trim().is_empty() {
@@ -164,6 +186,18 @@ fn normalize_visibility(input: Option<&str>) -> &str {
         "followers" => "followers",
         "specified" => "specified",
         _ => "home",
+    }
+}
+
+fn is_quiet_hour(hour: u8, start: u8, end: u8) -> bool {
+    if start == end {
+        return false;
+    }
+
+    if start < end {
+        hour >= start && hour < end
+    } else {
+        hour >= start || hour < end
     }
 }
 

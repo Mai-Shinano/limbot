@@ -22,6 +22,8 @@ pub struct Config {
     pub memory_file: PathBuf,
     pub random_post_interval_sec: Option<u64>,
     pub random_post_visibility: Option<String>,
+    pub random_post_quiet_start_hour: Option<u8>,
+    pub random_post_quiet_end_hour: Option<u8>,
     pub master_acct: String,
     pub instruction: String,
 }

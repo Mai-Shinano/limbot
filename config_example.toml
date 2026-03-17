@@ -20,6 +20,9 @@ openai_model = "llama-3.3-70b-versatile"
 # random_post_interval_sec = 1800
 # Optional visibility for autonomous posts: public/home/followers/specified
 # random_post_visibility = "home"
+# Optional quiet hours for autonomous posts (local time, 0-23, [start, end))
+# random_post_quiet_start_hour = 0
+# random_post_quiet_end_hour = 7
 master_acct = "your_acct"
 memory_file = "memory.json"
 instruction = """instruction to an LLM goes here..."""
