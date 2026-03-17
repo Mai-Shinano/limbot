@@ -41,10 +41,14 @@ async fn main() -> anyhow::Result<()> {
         None,
     )
     .context("Failed to build a client")?;
-    let _ = mastodon
-        .verify_account_credentials()
-        .await
-        .context("Failed to verify credentials")?;
+    if config.sns != megalodon::SNS::Firefish {
+        let _ = mastodon
+            .verify_account_credentials()
+            .await
+            .context("Failed to verify credentials")?;
+    } else {
+        log::warn!("Skipping verify_account_credentials for Misskey/Firefish compatibility");
+    }
     let mastodon: Arc<dyn Megalodon + Send + Sync> = Arc::from(mastodon);
 
     let ai = AICore::new(
