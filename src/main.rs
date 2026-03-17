@@ -46,8 +46,18 @@ async fn main() -> anyhow::Result<()> {
     let processed = Arc::new(Mutex::new(HashSet::<String>::new()));
     let mut since_id: Option<String> = None;
 
+    // Ignore notifications that existed before this process starts.
+    match misskey.fetch_notifications(None).await {
+        Ok(initial) => {
+            since_id = initial.first().map(|n| n.id.clone());
+        }
+        Err(e) => {
+            log::warn!("Failed to initialize notification cursor: {e:?}");
+        }
+    }
+
     loop {
-        match misskey.fetch_mention_notifications(since_id.as_deref()).await {
+        match misskey.fetch_notifications(since_id.as_deref()).await {
             Ok(notifications) => {
                 for notification in notifications.into_iter().rev() {
                     since_id = Some(notification.id.clone());
@@ -152,13 +162,14 @@ impl MisskeyClient {
         self.post_json("/api/i", &body).await
     }
 
-    async fn fetch_mention_notifications(
+    async fn fetch_notifications(
         &self,
         since_id: Option<&str>,
     ) -> anyhow::Result<Vec<Notification>> {
         let body = NotificationsRequest {
             i: self.token.as_str(),
-            include_types: vec!["mention"],
+            // Reply notifications include non-mention threaded responses.
+            include_types: vec!["mention", "reply"],
             limit: 30,
             since_id,
         };
