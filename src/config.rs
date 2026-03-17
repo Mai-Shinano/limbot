@@ -13,6 +13,7 @@ pub struct Config {
     pub sns_url: String,
     pub sns_token: Option<String>,
     pub openai_url: String,
+    pub groq_api_key: Option<String>,
     pub mistral_api_key: Option<String>,
     pub gemini_api_key: Option<String>,
     pub openai_token: Option<String>,
@@ -32,13 +33,20 @@ impl Config {
 
     pub fn llm_token(&self) -> anyhow::Result<String> {
         if let Some(token) = self
-            .mistral_api_key
+            .groq_api_key
             .as_deref()
+            .or(self.mistral_api_key.as_deref())
             .or(self.gemini_api_key.as_deref())
             .or(self.model_token.as_deref())
             .or(self.openai_token.as_deref())
         {
             return Ok(token.to_owned());
+        }
+
+        if let Ok(token) = std::env::var("GROQ_API_KEY") {
+            if !token.trim().is_empty() {
+                return Ok(token);
+            }
         }
 
         if let Ok(token) = std::env::var("MISTRAL_API_KEY") {
@@ -70,7 +78,7 @@ impl Config {
         }
 
         bail!(
-            "LLM token is not set. Set mistral_api_key/gemini_api_key/model_token/openai_token in config.toml, or MISTRAL_API_KEY/GEMINI_API_KEY/MODEL_TOKEN/GITHUB_TOKEN in environment. For local LLM, use localhost/127.0.0.1 URL to allow no token."
+            "LLM token is not set. Set groq_api_key/mistral_api_key/gemini_api_key/model_token/openai_token in config.toml, or GROQ_API_KEY/MISTRAL_API_KEY/GEMINI_API_KEY/MODEL_TOKEN/GITHUB_TOKEN in environment. For local LLM, use localhost/127.0.0.1 URL to allow no token."
         )
     }
 }
