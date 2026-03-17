@@ -4,13 +4,15 @@ sns_url = "https://example.net"
 sns_token = "your_misskey_api_token"
 # Local LLM endpoint (OpenAI-compatible)
 # Example: Ollama with openai compatibility
-openai_url = "http://127.0.0.1:11434/v1"
+openai_url = "https://api.mistral.ai/v1"
 # local endpoints can omit token
 # openai_token = ""
+# Mistral AI
+mistral_api_key = "your_mistral_api_key"
 # Gemini example (OpenAI-compatible endpoint):
 # openai_url = "https://generativelanguage.googleapis.com/v1beta/openai"
 # gemini_api_key = "AIza..."
-openai_model = "qwen2.5:7b"
+openai_model = "mistral-small-latest"
 master_acct = "your_acct"
 memory_file = "memory.json"
 instruction = """instruction to an LLM goes here..."""
