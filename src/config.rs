@@ -45,8 +45,17 @@ impl Config {
             }
         }
 
+        if is_local_llm_endpoint(&self.openai_url) {
+            return Ok(String::new());
+        }
+
         bail!(
-            "LLM token is not set. Set model_token/openai_token in config.toml, or MODEL_TOKEN/GITHUB_TOKEN in environment"
+            "LLM token is not set. Set model_token/openai_token in config.toml, or MODEL_TOKEN/GITHUB_TOKEN in environment. For local LLM, use localhost/127.0.0.1 URL to allow no token."
         )
     }
+}
+
+fn is_local_llm_endpoint(url: &str) -> bool {
+    let url = url.to_ascii_lowercase();
+    url.contains("localhost") || url.contains("127.0.0.1") || url.contains("0.0.0.0")
 }

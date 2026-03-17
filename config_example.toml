@@ -2,13 +2,12 @@ sns = "Misskey"
 sns_url = "https://example.net"
 # Misskey API token (required)
 sns_token = "your_misskey_api_token"
-# GitHub Models (OpenAI-compatible API)
-openai_url = "https://models.github.ai/inference"
-# For local testing, use env var MODEL_TOKEN instead of writing secrets here.
-# openai_token = "github_pat_..."
-# Alias for openai_token. Either value works.
-# model_token = "github_pat_..."
-openai_model = "openai/gpt-4.1-mini"
+# Local LLM endpoint (OpenAI-compatible)
+# Example: Ollama with openai compatibility
+openai_url = "http://127.0.0.1:11434/v1"
+# local endpoints can omit token
+# openai_token = ""
+openai_model = "qwen2.5:7b"
 master_acct = "your_acct"
 memory_file = "memory.json"
 instruction = """instruction to an LLM goes here..."""

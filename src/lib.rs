@@ -138,11 +138,15 @@ impl AICore {
         let mut last_error = String::new();
         let mut body = String::new();
         for attempt in 0..=MAX_PROVIDER_RETRIES {
-            let provider_response = self
+            let mut req = self
                 .client
                 .post(format!("{}/chat/completions", self.base_url))
-                .bearer_auth(&self.token)
-                .json(&request)
+                .json(&request);
+            if !self.token.trim().is_empty() {
+                req = req.bearer_auth(&self.token);
+            }
+
+            let provider_response = req
                 .send()
                 .await
                 .context("Failed to get response from the provider")?;
