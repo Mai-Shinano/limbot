@@ -43,6 +43,34 @@ async fn main() -> anyhow::Result<()> {
         &config.instruction,
     ));
 
+    if let Some(interval_sec) = config.random_post_interval_sec.filter(|v| *v > 0) {
+        let misskey = Arc::clone(&misskey);
+        let ai = Arc::clone(&ai);
+        let visibility = config
+            .random_post_visibility
+            .clone()
+            .unwrap_or_else(|| String::from("home"));
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(interval_sec)).await;
+                match ai.generate_random_post().await {
+                    Ok(text) => {
+                        if text.trim().is_empty() {
+                            continue;
+                        }
+                        let _ = misskey
+                            .post_note(&text, &visibility)
+                            .await
+                            .inspect_err(|e| log::error!("{e:?}"));
+                    }
+                    Err(e) => {
+                        log::error!("Failed to generate random post: {e:?}");
+                    }
+                }
+            }
+        });
+    }
+
     let processed = Arc::new(Mutex::new(HashSet::<String>::new()));
     let mut since_id: Option<String> = None;
 
@@ -191,7 +219,19 @@ impl MisskeyClient {
         let body = CreateNoteRequest {
             i: self.token.as_str(),
             text,
-            reply_id,
+            reply_id: Some(reply_id),
+            visibility,
+        };
+
+        let _value: serde_json::Value = self.post_json("/api/notes/create", &body).await?;
+        Ok(())
+    }
+
+    async fn post_note(&self, text: &str, visibility: &str) -> anyhow::Result<()> {
+        let body = CreateNoteRequest {
+            i: self.token.as_str(),
+            text,
+            reply_id: None,
             visibility,
         };
 
@@ -253,7 +293,8 @@ struct ConversationRequest<'a> {
 struct CreateNoteRequest<'a> {
     i: &'a str,
     text: &'a str,
-    reply_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reply_id: Option<&'a str>,
     visibility: &'a str,
 }
 

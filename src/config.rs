@@ -20,6 +20,8 @@ pub struct Config {
     pub model_token: Option<String>,
     pub openai_model: String,
     pub memory_file: PathBuf,
+    pub random_post_interval_sec: Option<u64>,
+    pub random_post_visibility: Option<String>,
     pub master_acct: String,
     pub instruction: String,
 }

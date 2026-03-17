@@ -283,6 +283,53 @@ impl AICore {
 
         Ok(response.response)
     }
+
+    pub async fn generate_random_post(&self) -> anyhow::Result<String> {
+        let memory = self.memory.read().await;
+        let memory_snapshot = serde_json::to_string(&*memory)
+            .context("Failed to serialize memory snapshot")?;
+        drop(memory);
+
+        let now = Local::now();
+        let seed = now.timestamp_nanos_opt().unwrap_or_default();
+        let person = schema::Person {
+            id: String::from("__autopost__"),
+            name: String::from("autopost"),
+            is_master: false,
+            affinity: 0,
+            talk_count: 0,
+            memo: String::from("自動投稿モード"),
+        };
+        let message_content = schema::Input {
+            context: Vec::new(),
+            person,
+            datetime: now,
+            content: format!(
+                "あなたは通常返信ではなく、独立したタイムライン投稿を1件だけ作成してください。"
+            ),
+        };
+        let mut value = serde_json::to_value(message_content)
+            .context("Failed to serialize random post input")?;
+        if let serde_json::Value::Object(ref mut map) = value {
+            map.insert(
+                String::from("autopost_context"),
+                json!({
+                    "seed": seed,
+                    "memory_json": memory_snapshot,
+                    "instructions": [
+                        "返信文ではなく単独投稿として自然な文体で書く",
+                        "毎回話題や切り口を変える",
+                        "1投稿だけ返す"
+                    ]
+                }),
+            );
+        }
+        let message = serde_json::to_string(&value)
+            .context("Failed to serialize random post request")?;
+
+        let response = self.request(message).await?;
+        Ok(response.response)
+    }
 }
 
 fn normalize_openai_base_url(base_url: &str) -> String {

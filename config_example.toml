@@ -16,6 +16,10 @@ groq_api_key = "gsk_..."
 # openai_url = "https://generativelanguage.googleapis.com/v1beta/openai"
 # gemini_api_key = "AIza..."
 openai_model = "llama-3.3-70b-versatile"
+# Optional: autonomous random post interval (seconds). unset to disable.
+# random_post_interval_sec = 1800
+# Optional visibility for autonomous posts: public/home/followers/specified
+# random_post_visibility = "home"
 master_acct = "your_acct"
 memory_file = "memory.json"
 instruction = """instruction to an LLM goes here..."""
