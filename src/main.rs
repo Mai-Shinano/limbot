@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use anyhow::Context;
+use anyhow::{Context, bail};
 use env_logger::Env;
 use llmbot::{AICore, ContextMessage};
 use megalodon::{
@@ -25,7 +25,11 @@ async fn main() -> anyhow::Result<()> {
     let llm_token = config.llm_token()?;
 
     if config.sns_token.is_none() {
-        let token = authorize(config).await?;
+        if config.sns == megalodon::SNS::Firefish {
+            bail!("Misskey/Firefish uses API tokens directly. Set sns_token in config.toml.");
+        }
+
+        let token = authorize(&config).await?;
         println!("token generated: {token}");
         return Ok(());
     }
@@ -154,8 +158,8 @@ async fn process(mastodon: &(dyn Megalodon + Send + Sync), ai: &AICore, status: 
     }
 }
 
-async fn authorize(config: config::Config) -> anyhow::Result<String> {
-    let client = megalodon::generator(config.sns, config.sns_url, None, None)
+async fn authorize(config: &config::Config) -> anyhow::Result<String> {
+    let client = megalodon::generator(config.sns.clone(), config.sns_url.clone(), None, None)
         .context("Failed to build a client")?;
 
     let options = AppInputOptions {

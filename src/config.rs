@@ -5,11 +5,13 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
+use serde::de::Error;
 use megalodon::SNS;
 use serde::Deserialize;
 
 #[derive(Clone, Deserialize)]
 pub struct Config {
+    #[serde(deserialize_with = "deserialize_sns")]
     pub sns: SNS,
     pub sns_url: String,
     pub sns_token: Option<String>,
@@ -20,6 +22,29 @@ pub struct Config {
     pub memory_file: PathBuf,
     pub master_acct: String,
     pub instruction: String,
+}
+
+fn deserialize_sns<'de, D>(deserializer: D) -> Result<SNS, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let sns = String::deserialize(deserializer)?;
+    let sns = sns.trim().to_ascii_lowercase();
+
+    let parsed = match sns.as_str() {
+        // megalodon 1.2.1 does not define SNS::Misskey.
+        // Treat Misskey as Firefish to keep compatibility with Misskey-like APIs.
+        "misskey" => SNS::Firefish,
+        "mastodon" => SNS::Mastodon,
+        "pleroma" => SNS::Pleroma,
+        "friendica" => SNS::Friendica,
+        "firefish" => SNS::Firefish,
+        "gotosocial" => SNS::Gotosocial,
+        "pixelfed" => SNS::Pixelfed,
+        _ => return Err(D::Error::custom(format!("Unknown sns: {sns}"))),
+    };
+
+    Ok(parsed)
 }
 
 impl Config {

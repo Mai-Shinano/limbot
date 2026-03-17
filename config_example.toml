@@ -1,6 +1,7 @@
-sns = "Pleroma"
+sns = "Misskey"
 sns_url = "https://example.net"
-# sns_token = "leave unset to generate one"
+# Misskey requires an API token. Automatic OAuth token generation is for Mastodon/Pleroma.
+sns_token = "your_misskey_api_token"
 # GitHub Models (OpenAI-compatible API)
 openai_url = "https://models.github.ai/inference"
 # For local testing, use env var MODEL_TOKEN instead of writing secrets here.
