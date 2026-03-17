@@ -7,6 +7,9 @@ sns_token = "your_misskey_api_token"
 openai_url = "http://127.0.0.1:11434/v1"
 # local endpoints can omit token
 # openai_token = ""
+# Gemini example (OpenAI-compatible endpoint):
+# openai_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+# gemini_api_key = "AIza..."
 openai_model = "qwen2.5:7b"
 master_acct = "your_acct"
 memory_file = "memory.json"
