@@ -111,7 +111,7 @@ impl AICore {
                                 "type": "object",
                                 "description": "メモの更新内容",
                                 "additionalProperties": false,
-                                "required": ["mode"],
+                                "required": ["mode", "content"],
                                 "properties": {
                                     "mode": {
                                         "type": "string",
@@ -119,8 +119,8 @@ impl AICore {
                                         "description": "メモの更新方法",
                                     },
                                     "content": {
-                                        "type": "string",
-                                        "description": "更新後の内容 (no_changesの場合省略可)",
+                                        "type": ["string", "null"],
+                                        "description": "更新後の内容 (no_changesの場合はnull)",
                                     }
                                 },
                             },
