@@ -22,6 +22,7 @@ async fn main() -> anyhow::Result<()> {
     env_logger::init_from_env(Env::default().default_filter_or("llmbot=info"));
 
     let config = config::Config::load("config.toml")?;
+    let llm_token = config.llm_token()?;
 
     if config.sns_token.is_none() {
         let token = authorize(config).await?;
@@ -45,7 +46,7 @@ async fn main() -> anyhow::Result<()> {
     let ai = AICore::new(
         &config.memory_file,
         &config.openai_url,
-        &config.openai_token,
+        &llm_token,
         &config.openai_model,
         &config.master_acct,
         &config.instruction,

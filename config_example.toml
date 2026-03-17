@@ -1,9 +1,13 @@
 sns = "Pleroma"
 sns_url = "https://example.net"
 # sns_token = "leave unset to generate one"
-openai_url = "https://openrouter.ai/api/v1"
-openai_token = "sk-or-v1-..."
-openai_model = "google/gemini-3.1-flash-lite-preview"
+# GitHub Models (OpenAI-compatible API)
+openai_url = "https://models.github.ai/inference"
+# For local testing, use env var MODEL_TOKEN instead of writing secrets here.
+# openai_token = "github_pat_..."
+# Alias for openai_token. Either value works.
+# model_token = "github_pat_..."
+openai_model = "openai/gpt-4.1-mini"
 master_acct = "your_acct"
 memory_file = "memory.json"
 instruction = """instruction to an LLM goes here..."""
