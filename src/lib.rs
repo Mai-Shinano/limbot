@@ -142,10 +142,22 @@ impl AICore {
             .send()
             .await
             .context("Failed to get response from the provider")?;
-        let model_response: schema::OpenAIResponse = provider_response
-            .json()
+        let status = provider_response.status();
+        let body = provider_response
+            .text()
             .await
-            .context("Failed to parse a response from the provider")?;
+            .context("Failed to read a response body from the provider")?;
+
+        if !status.is_success() {
+            let snippet: String = body.chars().take(500).collect();
+            bail!("Provider returned HTTP {status}: {snippet}");
+        }
+
+        let model_response: schema::OpenAIResponse = serde_json::from_str(&body)
+            .with_context(|| {
+                let snippet: String = body.chars().take(500).collect();
+                format!("Failed to parse a response from the provider: {snippet}")
+            })?;
 
         let model_response_content = &model_response
             .choices
