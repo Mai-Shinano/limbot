@@ -2,13 +2,13 @@
 //
 // SPDX-License-Identifier: UPL-1.0
 
-use std::path::{Path, PathBuf};
+use std::{path::{Path, PathBuf}, time::Duration};
 
 use anyhow::{Context, bail};
 use chrono::Local;
 use reqwest::Client;
 use serde_json::json;
-use tokio::sync::RwLock;
+use tokio::{sync::RwLock, time::sleep};
 
 pub use schema::ContextMessage;
 
@@ -35,6 +35,7 @@ const SYSTEM_PROMPT_TEMPLATE: &str = r#"# 入力
 応答内容は、以下に示すキャラクター設定に従い作成してください。また、好感度(-5から5)に合わせて態度を変化させるようにしてください。
 
 ## キャラクター設定"#;
+const MAX_PROVIDER_RETRIES: u8 = 3;
 
 pub struct AICore {
     client: Client,
@@ -134,30 +135,65 @@ impl AICore {
 
         log::debug!("{request:?}");
 
-        let provider_response = self
-            .client
-            .post(format!("{}/chat/completions", self.base_url))
-            .bearer_auth(&self.token)
-            .json(&request)
-            .send()
-            .await
-            .context("Failed to get response from the provider")?;
-        let status = provider_response.status();
-        let body = provider_response
-            .text()
-            .await
-            .context("Failed to read a response body from the provider")?;
+        let mut last_error = String::new();
+        let mut body = String::new();
+        for attempt in 0..=MAX_PROVIDER_RETRIES {
+            let provider_response = self
+                .client
+                .post(format!("{}/chat/completions", self.base_url))
+                .bearer_auth(&self.token)
+                .json(&request)
+                .send()
+                .await
+                .context("Failed to get response from the provider")?;
 
-        if !status.is_success() {
+            let status = provider_response.status();
+            let retry_after = provider_response
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse::<u64>().ok());
+            body = provider_response
+                .text()
+                .await
+                .context("Failed to read a response body from the provider")?;
+
+            if status.is_success() {
+                break;
+            }
+
             let snippet: String = body.chars().take(500).collect();
-            bail!("Provider returned HTTP {status}: {snippet}");
+            last_error = format!("Provider returned HTTP {status}: {snippet}");
+
+            let is_retryable = status.as_u16() == 429 || status.is_server_error();
+            if is_retryable && attempt < MAX_PROVIDER_RETRIES {
+                let fallback_wait = 2_u64.pow(u32::from(attempt + 1));
+                let wait_sec = retry_after.unwrap_or(fallback_wait).clamp(1, 60);
+                log::warn!(
+                    "Provider rate-limited or unavailable (status: {}). retry {}/{} in {}s",
+                    status,
+                    attempt + 1,
+                    MAX_PROVIDER_RETRIES,
+                    wait_sec
+                );
+                sleep(Duration::from_secs(wait_sec)).await;
+                continue;
+            }
+
+            bail!("{last_error}");
         }
 
-        let model_response: schema::OpenAIResponse = serde_json::from_str(&body)
-            .with_context(|| {
-                let snippet: String = body.chars().take(500).collect();
-                format!("Failed to parse a response from the provider: {snippet}")
-            })?;
+        if body.is_empty() {
+            bail!(
+                "Provider returned an empty response after retries. Last error: {}",
+                last_error
+            );
+        }
+
+        let model_response: schema::OpenAIResponse = serde_json::from_str(&body).with_context(|| {
+            let snippet: String = body.chars().take(500).collect();
+            format!("Failed to parse a response from the provider: {snippet}")
+        })?;
 
         let model_response_content = &model_response
             .choices
