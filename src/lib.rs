@@ -61,12 +61,13 @@ impl AICore {
         let memory = memory::Memory::load(&file)
             .inspect_err(|e| log::warn!("{e:?}"))
             .unwrap_or_default();
+        let base_url = normalize_openai_base_url(base_url);
 
         Self {
             client,
             memory_file: file.as_ref().to_owned(),
             memory: RwLock::new(memory),
-            base_url: base_url.to_owned(),
+            base_url,
             token: token.to_owned(),
             model: model.to_owned(),
             master_acct: master_acct.to_owned(),
@@ -138,9 +139,10 @@ impl AICore {
         let mut last_error = String::new();
         let mut body = String::new();
         for attempt in 0..=MAX_PROVIDER_RETRIES {
+            let request_url = format!("{}/chat/completions", self.base_url);
             let mut req = self
                 .client
-                .post(format!("{}/chat/completions", self.base_url))
+                .post(&request_url)
                 .json(&request);
             if !self.token.trim().is_empty() {
                 req = req.bearer_auth(&self.token);
@@ -167,7 +169,7 @@ impl AICore {
             }
 
             let snippet: String = body.chars().take(500).collect();
-            last_error = format!("Provider returned HTTP {status}: {snippet}");
+            last_error = format!("Provider returned HTTP {status} at {request_url}: {snippet}");
 
             let is_retryable = status.as_u16() == 429 || status.is_server_error();
             if is_retryable && attempt < MAX_PROVIDER_RETRIES {
@@ -281,4 +283,17 @@ impl AICore {
 
         Ok(response.response)
     }
+}
+
+fn normalize_openai_base_url(base_url: &str) -> String {
+    let trimmed = base_url.trim_end_matches('/');
+    let lower = trimmed.to_ascii_lowercase();
+    let is_local = lower.contains("localhost")
+        || lower.contains("127.0.0.1")
+        || lower.contains("0.0.0.0");
+    if is_local && !lower.contains("/v1") {
+        return format!("{trimmed}/v1");
+    }
+
+    trimmed.to_owned()
 }
