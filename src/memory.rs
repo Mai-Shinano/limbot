@@ -15,7 +15,25 @@ pub struct Memory(HashMap<String, Person>);
 
 impl Memory {
     pub fn load<P: AsRef<Path>>(file: P) -> anyhow::Result<Self> {
-        let file = std::fs::read_to_string(file).context("Failed to read the memory file")?;
+        let path = file.as_ref();
+
+        let file = match std::fs::read_to_string(path) {
+            Ok(file) => file,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                if let Some(parent) = path.parent() {
+                    if !parent.as_os_str().is_empty() {
+                        std::fs::create_dir_all(parent)
+                            .context("Failed to create memory directory")?;
+                    }
+                }
+                std::fs::write(path, "{}")
+                    .context("Failed to initialize memory file")?;
+                String::from("{}")
+            }
+            Err(e) => {
+                return Err(e).context("Failed to read the memory file");
+            }
+        };
         if file.trim().is_empty() {
             return Ok(Self::default());
         }
