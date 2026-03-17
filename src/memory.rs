@@ -16,7 +16,12 @@ pub struct Memory(HashMap<String, Person>);
 impl Memory {
     pub fn load<P: AsRef<Path>>(file: P) -> anyhow::Result<Self> {
         let file = std::fs::read_to_string(file).context("Failed to read the memory file")?;
-        let memory: Self = serde_json::from_str(&file).context("Failed to perse memory file")?;
+        if file.trim().is_empty() {
+            return Ok(Self::default());
+        }
+
+        let memory: Self =
+            serde_json::from_str(&file).context("Failed to parse memory file")?;
         Ok(memory)
     }
 
