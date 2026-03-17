@@ -2,18 +2,14 @@
 //
 // SPDX-License-Identifier: UPL-1.0
 
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use anyhow::{Context, bail};
 use env_logger::Env;
 use llmbot::{AICore, ContextMessage};
-use megalodon::{
-    Megalodon,
-    default::NO_REDIRECT,
-    entities::{Status, StatusVisibility, notification::NotificationType},
-    megalodon::{AppInputOptions, PostStatusInputOptions},
-    streaming::Message,
-};
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
 
 mod config;
 
@@ -22,182 +18,282 @@ async fn main() -> anyhow::Result<()> {
     env_logger::init_from_env(Env::default().default_filter_or("llmbot=info"));
 
     let config = config::Config::load("config.toml")?;
+    if !config.sns.eq_ignore_ascii_case("misskey") {
+        bail!("Only sns = \"Misskey\" is supported in this build.");
+    }
+
+    let sns_token = config
+        .sns_token
+        .clone()
+        .context("Misskey requires sns_token in config.toml")?;
     let llm_token = config.llm_token()?;
 
-    if config.sns_token.is_none() {
-        if config.sns == megalodon::SNS::Firefish {
-            bail!("Misskey/Firefish uses API tokens directly. Set sns_token in config.toml.");
-        }
+    let misskey = Arc::new(MisskeyClient::new(config.sns_url.clone(), sns_token));
+    let me = misskey
+        .verify_credentials()
+        .await
+        .context("Failed to verify Misskey credentials")?;
 
-        let token = authorize(&config).await?;
-        println!("token generated: {token}");
-        return Ok(());
-    }
-
-    let mastodon = megalodon::generator(
-        config.sns.clone(),
-        config.sns_url.clone(),
-        config.sns_token.clone(),
-        None,
-    )
-    .context("Failed to build a client")?;
-    if config.sns != megalodon::SNS::Firefish {
-        let _ = mastodon
-            .verify_account_credentials()
-            .await
-            .context("Failed to verify credentials")?;
-    } else {
-        log::warn!("Skipping verify_account_credentials for Misskey/Firefish compatibility");
-    }
-    let mastodon: Arc<dyn Megalodon + Send + Sync> = Arc::from(mastodon);
-
-    let ai = AICore::new(
+    let ai = Arc::new(AICore::new(
         &config.memory_file,
         &config.openai_url,
         &llm_token,
         &config.openai_model,
         &config.master_acct,
         &config.instruction,
-    );
-    let ai = Arc::new(ai);
+    ));
 
-    let streaming = mastodon.user_streaming().await;
-    streaming
-        .listen(Box::new(|message| {
-            let mastodon = Arc::clone(&mastodon);
-            let ai = Arc::clone(&ai);
-            Box::pin({
-                async move {
-                    let Message::Notification(notification) = message else {
-                        return;
+    let processed = Arc::new(Mutex::new(HashSet::<String>::new()));
+    let mut since_id: Option<String> = None;
+
+    loop {
+        match misskey.fetch_mention_notifications(since_id.as_deref()).await {
+            Ok(notifications) => {
+                for notification in notifications.into_iter().rev() {
+                    since_id = Some(notification.id.clone());
+
+                    let Some(note) = notification.note else {
+                        continue;
                     };
-                    if notification.r#type == NotificationType::Mention {
-                        let Some(status) = notification.status else {
-                            return;
-                        };
 
-                        tokio::spawn(async move {
-                            let mastodon = Arc::clone(&mastodon);
-                            let ai = Arc::clone(&ai);
-                            process(&*mastodon, &ai, status).await;
-                        });
+                    let mut processed = processed.lock().await;
+                    if processed.contains(&note.id) {
+                        continue;
                     }
-                }
-            })
-        }))
-        .await;
+                    let _ = processed.insert(note.id.clone());
+                    drop(processed);
 
-    Ok(())
+                    if note.user.id == me.id {
+                        continue;
+                    }
+
+                    let misskey = Arc::clone(&misskey);
+                    let ai = Arc::clone(&ai);
+                    tokio::spawn(async move {
+                        process(&misskey, &ai, note).await;
+                    });
+                }
+            }
+            Err(e) => {
+                log::error!("{e:?}");
+            }
+        }
+
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
 }
 
-async fn process(mastodon: &(dyn Megalodon + Send + Sync), ai: &AICore, status: Status) {
-    let context: Vec<ContextMessage> = mastodon
-        .get_status_context(status.id.clone(), None)
+async fn process(misskey: &MisskeyClient, ai: &AICore, note: Note) {
+    let context = misskey
+        .fetch_conversation(&note.id)
         .await
-        .map(|ctx| {
-            ctx.json
-                .ancestors
+        .map(|notes| {
+            notes
                 .into_iter()
-                .map(|status| ContextMessage {
-                    name: status.account.display_name,
-                    content: status
-                        .plain_content
-                        .unwrap_or_else(|| nanohtml2text::html2text(&status.content))
-                        .trim()
-                        .to_owned(),
+                .filter(|ancestor| ancestor.id != note.id)
+                .map(|ancestor| ContextMessage {
+                    name: ancestor.user.display_name(),
+                    content: ancestor.content(),
                 })
-                .collect()
+                .collect::<Vec<_>>()
         })
         .inspect_err(|e| log::error!("{e:?}"))
-        // 失敗した場合コンテキストなしで続ける
         .unwrap_or_default();
 
-    let content = status
-        .plain_content
-        .unwrap_or_else(|| nanohtml2text::html2text(&status.content))
-        .trim()
-        .to_owned();
+    let account_id = note.user.acct();
+    let display_name = note.user.display_name();
+    let content = note.content();
 
-    let visibility = if status.visibility == StatusVisibility::Public {
-        StatusVisibility::Unlisted
-    } else {
-        status.visibility
-    };
-
-    match ai
-        .generate(
-            &status.account.acct,
-            &status.account.display_name,
-            &content,
-            context,
-        )
+    let response = match ai
+        .generate(&account_id, &display_name, &content, context)
         .await
     {
-        Ok(response) => {
-            let _ = mastodon
-                .post_status(
-                    response,
-                    Some(&PostStatusInputOptions {
-                        in_reply_to_id: Some(status.id),
-                        visibility: Some(visibility),
-                        ..Default::default()
-                    }),
-                )
-                .await
-                .inspect_err(|e| log::error!("{e:?}"));
+        Ok(response) => response,
+        Err(e) => format!("エラーだよ。\n\n{e:?}"),
+    };
+
+    let visibility = normalize_visibility(note.visibility.as_deref());
+    let _ = misskey
+        .post_reply(&response, &note.id, visibility)
+        .await
+        .inspect_err(|e| log::error!("{e:?}"));
+}
+
+fn normalize_visibility(input: Option<&str>) -> &str {
+    match input.unwrap_or("home") {
+        "public" => "home",
+        "home" => "home",
+        "followers" => "followers",
+        "specified" => "specified",
+        _ => "home",
+    }
+}
+
+struct MisskeyClient {
+    client: Client,
+    base_url: String,
+    token: String,
+}
+
+impl MisskeyClient {
+    fn new(base_url: String, token: String) -> Self {
+        Self {
+            client: Client::new(),
+            base_url,
+            token,
         }
-        Err(e) => {
-            let _ = mastodon
-                .post_status(
-                    format!("エラーだよ。\n\n{e:?}"),
-                    Some(&PostStatusInputOptions {
-                        in_reply_to_id: Some(status.id),
-                        visibility: Some(visibility),
-                        ..Default::default()
-                    }),
-                )
-                .await
-                .inspect_err(|e| log::error!("{e:?}"));
+    }
+
+    async fn verify_credentials(&self) -> anyhow::Result<MisskeyUser> {
+        let body = IBody {
+            i: self.token.as_str(),
+        };
+
+        self.post_json("/api/i", &body).await
+    }
+
+    async fn fetch_mention_notifications(
+        &self,
+        since_id: Option<&str>,
+    ) -> anyhow::Result<Vec<Notification>> {
+        let body = NotificationsRequest {
+            i: self.token.as_str(),
+            include_types: vec!["mention"],
+            limit: 30,
+            since_id,
+        };
+
+        self.post_json("/api/i/notifications", &body).await
+    }
+
+    async fn fetch_conversation(&self, note_id: &str) -> anyhow::Result<Vec<Note>> {
+        let body = ConversationRequest {
+            i: self.token.as_str(),
+            note_id,
+            limit: 20,
+        };
+
+        self.post_json("/api/notes/conversation", &body).await
+    }
+
+    async fn post_reply(&self, text: &str, reply_id: &str, visibility: &str) -> anyhow::Result<()> {
+        let body = CreateNoteRequest {
+            i: self.token.as_str(),
+            text,
+            reply_id,
+            visibility,
+        };
+
+        let _value: serde_json::Value = self.post_json("/api/notes/create", &body).await?;
+        Ok(())
+    }
+
+    async fn post_json<TReq, TResp>(&self, path: &str, body: &TReq) -> anyhow::Result<TResp>
+    where
+        TReq: Serialize + ?Sized,
+        TResp: for<'de> Deserialize<'de>,
+    {
+        let response = self
+            .client
+            .post(format!("{}{}", self.base_url.trim_end_matches('/'), path))
+            .json(body)
+            .send()
+            .await
+            .context("Failed to call Misskey API")?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let text = response.text().await.unwrap_or_default();
+            bail!("Misskey API error {status}: {text}");
+        }
+
+        response
+            .json::<TResp>()
+            .await
+            .context("Failed to parse Misskey API response")
+    }
+}
+
+#[derive(Serialize)]
+struct IBody<'a> {
+    i: &'a str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NotificationsRequest<'a> {
+    i: &'a str,
+    include_types: Vec<&'a str>,
+    limit: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    since_id: Option<&'a str>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ConversationRequest<'a> {
+    i: &'a str,
+    note_id: &'a str,
+    limit: u8,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateNoteRequest<'a> {
+    i: &'a str,
+    text: &'a str,
+    reply_id: &'a str,
+    visibility: &'a str,
+}
+
+#[derive(Deserialize)]
+struct Notification {
+    id: String,
+    note: Option<Note>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Note {
+    id: String,
+    text: Option<String>,
+    cw: Option<String>,
+    visibility: Option<String>,
+    user: MisskeyUser,
+}
+
+impl Note {
+    fn content(&self) -> String {
+        match (&self.cw, &self.text) {
+            (Some(cw), Some(text)) if !cw.is_empty() => format!("{cw}\n{text}"),
+            (Some(cw), None) if !cw.is_empty() => cw.clone(),
+            (_, Some(text)) => text.clone(),
+            _ => String::new(),
         }
     }
 }
 
-async fn authorize(config: &config::Config) -> anyhow::Result<String> {
-    let client = megalodon::generator(config.sns.clone(), config.sns_url.clone(), None, None)
-        .context("Failed to build a client")?;
+#[derive(Clone, Deserialize)]
+struct MisskeyUser {
+    id: String,
+    username: String,
+    host: Option<String>,
+    name: Option<String>,
+}
 
-    let options = AppInputOptions {
-        scopes: Some(vec![
-            String::from("read"),
-            String::from("write"),
-            // String::from("follow"), // いまのところ使わない
-        ]),
-        ..Default::default()
-    };
+impl MisskeyUser {
+    fn acct(&self) -> String {
+        match self.host.as_deref() {
+            Some(host) if !host.is_empty() => format!("{}@{host}", self.username),
+            _ => self.username.clone(),
+        }
+    }
 
-    let app_data = client
-        .register_app(String::from("syoboneko"), &options)
-        .await
-        .context("Failed to register an app")?;
-
-    println!(
-        "Authorization URL is generated: {}\n\nEnter authorization code from website: ",
-        app_data.url.unwrap()
-    );
-    let mut buf = String::new();
-    std::io::stdin()
-        .read_line(&mut buf)
-        .context("Failed to read from stdin")?;
-
-    let token_data = client
-        .fetch_access_token(
-            app_data.client_id,
-            app_data.client_secret,
-            buf.trim().to_owned(),
-            NO_REDIRECT.to_owned(),
-        )
-        .await
-        .context("Failed to get an access token")?;
-
-    Ok(token_data.access_token)
+    fn display_name(&self) -> String {
+        self.name
+            .as_ref()
+            .filter(|name| !name.trim().is_empty())
+            .cloned()
+            .unwrap_or_else(|| self.username.clone())
+    }
 }
