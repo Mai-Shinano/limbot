@@ -5,14 +5,15 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
-use chrono::{DateTime, Local};
+use chrono::Local;
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::sync::RwLock;
 
+pub use schema::ContextMessage;
+
 mod memory;
-mod openai;
+mod schema;
 
 const SYSTEM_PROMPT_TEMPLATE: &str = r#"# 入力
 
@@ -31,61 +32,7 @@ const SYSTEM_PROMPT_TEMPLATE: &str = r#"# 入力
 
 ## キャラクター設定"#;
 
-#[derive(Serialize)]
-pub struct ContextMessage {
-    pub name: String,
-    pub content: String,
-}
-
-#[derive(Serialize)]
-struct Person {
-    id: String,
-    name: String,
-    is_master: bool,
-    affinity: i8,
-    talk_count: u32,
-    memo: String,
-}
-
-#[derive(Serialize)]
-struct Content {
-    context: Vec<ContextMessage>,
-    person: Person,
-    datetime: DateTime<Local>,
-    content: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum AffinityChange {
-    Up,
-    Down,
-    Unchanged,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum MemoUpdateMode {
-    Overwrite,
-    NoChanges,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-struct MemoUpdate {
-    mode: MemoUpdateMode,
-    content: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Response {
-    // reasoning: String,
-    affinity_change: AffinityChange,
-    memo_update: MemoUpdate,
-    response: String,
-}
-
-pub struct App {
+pub struct AICore {
     client: Client,
     base_url: String,
     token: String,
@@ -96,7 +43,7 @@ pub struct App {
     memory: RwLock<memory::Memory>,
 }
 
-impl App {
+impl AICore {
     pub fn new<P: AsRef<Path>>(
         file: P,
         base_url: &str,
@@ -122,7 +69,7 @@ impl App {
         }
     }
 
-    async fn request(&self, message: String) -> anyhow::Result<Response> {
+    async fn request(&self, message: String) -> anyhow::Result<schema::Output> {
         let request = json!({
             "model": self.model,
             "messages": [
@@ -191,7 +138,7 @@ impl App {
             .send()
             .await
             .context("Failed to get response from the provider")?;
-        let model_response: openai::Response = provider_response
+        let model_response: schema::OpenAIResponse = provider_response
             .json()
             .await
             .context("Failed to parse a response from the provider")?;
@@ -203,10 +150,10 @@ impl App {
             .message
             .content;
 
-        log::debug!("{model_response_content}");
-
         let response = serde_json::from_str(model_response_content)
             .context("Failed to parse the response from the model")?;
+
+        log::debug!("{response:?}");
 
         Ok(response)
     }
@@ -216,7 +163,7 @@ impl App {
         account_id: &str,
         display_name: &str,
         content: &str,
-        context: Vec<ContextMessage>,
+        context: Vec<schema::ContextMessage>,
     ) -> anyhow::Result<String> {
         let memory = self.memory.read().await;
         let person = if let Some(person) = memory.get(account_id) {
@@ -235,7 +182,7 @@ impl App {
             bail!("レートリミットです。しばらく待ってから再度お試しください。");
         }
 
-        let person = Person {
+        let person = schema::Person {
             id: account_id.to_owned(),
             name: display_name.to_owned(),
             is_master: account_id == self.master_acct,
@@ -243,7 +190,7 @@ impl App {
             talk_count: person.talk_count,
             memo: person.memo.clone(),
         };
-        let message_content = Content {
+        let message_content = schema::Input {
             context,
             person,
             datetime: Local::now(),
@@ -254,20 +201,19 @@ impl App {
             serde_json::to_string(&message_content).context("Failed to serialize the context")?;
 
         let response = self.request(message).await?;
-        log::debug!("{response:?}");
 
         let mut memory = self.memory.write().await;
         let person = memory.get_mut(account_id).unwrap();
         match response.affinity_change {
-            AffinityChange::Up => person.affinity.tick_positive(),
-            AffinityChange::Down => person.affinity.tick_negative(),
-            AffinityChange::Unchanged => {}
+            schema::AffinityChange::Up => person.affinity.tick_positive(),
+            schema::AffinityChange::Down => person.affinity.tick_negative(),
+            schema::AffinityChange::Unchanged => {}
         }
         match response.memo_update.mode {
-            MemoUpdateMode::Overwrite => {
+            schema::MemoUpdateMode::Overwrite => {
                 person.memo = response.memo_update.content.unwrap_or_default();
             }
-            MemoUpdateMode::NoChanges => {}
+            schema::MemoUpdateMode::NoChanges => {}
         }
         person.update_talk_count();
 

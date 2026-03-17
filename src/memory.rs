@@ -8,8 +8,6 @@ use anyhow::Context;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-mod affinity;
-
 const MAX_REQUESTS_PER_DAY: u8 = 20;
 
 #[derive(Default, Serialize, Deserialize)]
@@ -46,7 +44,7 @@ impl Memory {
 pub struct Person {
     request_count_start: DateTime<Utc>,
     request_count: u8,
-    pub affinity: affinity::Affinity,
+    pub affinity: Affinity,
     pub talk_count: u32,
     pub memo: String,
 }
@@ -67,5 +65,36 @@ impl Person {
         }
 
         self.talk_count += 1;
+    }
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub struct Affinity {
+    value: i8,
+}
+
+impl Affinity {
+    pub const fn tick_positive(&mut self) {
+        self.value = self.value.saturating_add(1);
+    }
+
+    pub const fn tick_negative(&mut self) {
+        self.value = self.value.saturating_sub(1);
+    }
+
+    pub const fn affinity(&self) -> i8 {
+        match self.value {
+            ..=-62 => -5,
+            -61..=-30 => -4,
+            -29..=-14 => -3,
+            -13..=-6 => -2,
+            -5..=-2 => -1,
+            -1..=1 => 0,
+            2..=5 => 1,
+            6..=13 => 2,
+            14..=29 => 3,
+            30..=61 => 4,
+            62.. => 5,
+        }
     }
 }

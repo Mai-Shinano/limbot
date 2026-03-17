@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use env_logger::Env;
-use llmbot::{App, ContextMessage};
+use llmbot::{AICore, ContextMessage};
 use megalodon::{
     Megalodon,
     default::NO_REDIRECT,
@@ -29,20 +29,20 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let client = megalodon::generator(
+    let mastodon = megalodon::generator(
         config.sns.clone(),
         config.sns_url.clone(),
         config.sns_token.clone(),
         None,
     )
     .context("Failed to build a client")?;
-    let _ = client
+    let _ = mastodon
         .verify_account_credentials()
         .await
         .context("Failed to verify credentials")?;
-    let client: Arc<dyn Megalodon + Send + Sync> = Arc::from(client);
+    let mastodon: Arc<dyn Megalodon + Send + Sync> = Arc::from(mastodon);
 
-    let app = App::new(
+    let ai = AICore::new(
         &config.memory_file,
         &config.openai_url,
         &config.openai_token,
@@ -50,13 +50,13 @@ async fn main() -> anyhow::Result<()> {
         &config.master_acct,
         &config.instruction,
     );
-    let app = Arc::new(app);
+    let ai = Arc::new(ai);
 
-    let streaming = client.user_streaming().await;
+    let streaming = mastodon.user_streaming().await;
     streaming
         .listen(Box::new(|message| {
-            let client = Arc::clone(&client);
-            let app = Arc::clone(&app);
+            let mastodon = Arc::clone(&mastodon);
+            let ai = Arc::clone(&ai);
             Box::pin({
                 async move {
                     let Message::Notification(notification) = message else {
@@ -68,9 +68,9 @@ async fn main() -> anyhow::Result<()> {
                         };
 
                         tokio::spawn(async move {
-                            let client = Arc::clone(&client);
-                            let app = Arc::clone(&app);
-                            process(&*client, &app, status).await;
+                            let mastodon = Arc::clone(&mastodon);
+                            let ai = Arc::clone(&ai);
+                            process(&*mastodon, &ai, status).await;
                         });
                     }
                 }
@@ -81,8 +81,8 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn process(client: &(dyn Megalodon + Send + Sync), app: &App, status: Status) {
-    let context: Vec<ContextMessage> = client
+async fn process(mastodon: &(dyn Megalodon + Send + Sync), ai: &AICore, status: Status) {
+    let context: Vec<ContextMessage> = mastodon
         .get_status_context(status.id.clone(), None)
         .await
         .map(|ctx| {
@@ -115,7 +115,7 @@ async fn process(client: &(dyn Megalodon + Send + Sync), app: &App, status: Stat
         status.visibility
     };
 
-    match app
+    match ai
         .generate(
             &status.account.acct,
             &status.account.display_name,
@@ -125,7 +125,7 @@ async fn process(client: &(dyn Megalodon + Send + Sync), app: &App, status: Stat
         .await
     {
         Ok(response) => {
-            let _ = client
+            let _ = mastodon
                 .post_status(
                     response,
                     Some(&PostStatusInputOptions {
@@ -138,7 +138,7 @@ async fn process(client: &(dyn Megalodon + Send + Sync), app: &App, status: Stat
                 .inspect_err(|e| log::error!("{e:?}"));
         }
         Err(e) => {
-            let _ = client
+            let _ = mastodon
                 .post_status(
                     format!("エラーだよ。\n\n{e:?}"),
                     Some(&PostStatusInputOptions {
