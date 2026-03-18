@@ -204,7 +204,7 @@ async fn main() -> anyhow::Result<()> {
                     .has_my_reply(&target.id, &my_id)
                     .await
                     .inspect_err(|e| log::warn!("Failed to check existing proactive reply: {e:?}"))
-                    .unwrap_or(false)
+                    .unwrap_or(true)
                 {
                     continue;
                 }
@@ -284,7 +284,7 @@ async fn process(misskey: &MisskeyClient, ai: &AICore, note: Note, my_id: &str) 
         .has_my_reply(&note.id, my_id)
         .await
         .inspect_err(|e| log::warn!("Failed to check existing reply: {e:?}"))
-        .unwrap_or(false)
+        .unwrap_or(true)
     {
         return;
     }
@@ -429,9 +429,27 @@ impl MisskeyClient {
         self.post_json("/api/notes/replies", &body).await
     }
 
+    async fn fetch_user_notes(&self, user_id: &str, limit: u8) -> anyhow::Result<Vec<Note>> {
+        let body = UsersNotesRequest {
+            i: self.token.as_str(),
+            user_id,
+            limit,
+            include_replies: true,
+        };
+
+        self.post_json("/api/users/notes", &body).await
+    }
+
     async fn has_my_reply(&self, note_id: &str, my_id: &str) -> anyhow::Result<bool> {
         let replies = self.fetch_replies(note_id, 50).await?;
-        Ok(replies.into_iter().any(|reply| reply.user.id == my_id))
+        if replies.into_iter().any(|reply| reply.user.id == my_id) {
+            return Ok(true);
+        }
+
+        let my_notes = self.fetch_user_notes(my_id, 100).await?;
+        Ok(my_notes
+            .into_iter()
+            .any(|note| note.reply_id.as_deref() == Some(note_id)))
     }
 
     async fn post_reply(&self, text: &str, reply_id: &str, visibility: &str) -> anyhow::Result<()> {
@@ -524,6 +542,15 @@ struct RepliesRequest<'a> {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct UsersNotesRequest<'a> {
+    i: &'a str,
+    user_id: &'a str,
+    limit: u8,
+    include_replies: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct CreateNoteRequest<'a> {
     i: &'a str,
     text: &'a str,
@@ -544,6 +571,7 @@ struct Note {
     id: String,
     text: Option<String>,
     cw: Option<String>,
+    reply_id: Option<String>,
     visibility: Option<String>,
     user: MisskeyUser,
 }
