@@ -201,6 +201,15 @@ async fn main() -> anyhow::Result<()> {
                 }
 
                 if misskey
+                    .has_my_reply(&target.id, &my_id)
+                    .await
+                    .inspect_err(|e| log::warn!("Failed to check existing proactive reply: {e:?}"))
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+
+                if misskey
                     .post_reply(&reply, &target.id, &visibility)
                     .await
                     .inspect_err(|e| log::error!("{e:?}"))
@@ -255,8 +264,9 @@ async fn main() -> anyhow::Result<()> {
 
                     let misskey = Arc::clone(&misskey);
                     let ai = Arc::clone(&ai);
+                    let my_id = me.id.clone();
                     tokio::spawn(async move {
-                        process(&misskey, &ai, note).await;
+                        process(&misskey, &ai, note, &my_id).await;
                     });
                 }
             }
@@ -269,7 +279,16 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
-async fn process(misskey: &MisskeyClient, ai: &AICore, note: Note) {
+async fn process(misskey: &MisskeyClient, ai: &AICore, note: Note, my_id: &str) {
+    if misskey
+        .has_my_reply(&note.id, my_id)
+        .await
+        .inspect_err(|e| log::warn!("Failed to check existing reply: {e:?}"))
+        .unwrap_or(false)
+    {
+        return;
+    }
+
     let context = misskey
         .fetch_conversation(&note.id)
         .await
@@ -400,6 +419,21 @@ impl MisskeyClient {
         self.post_json("/api/notes/timeline", &body).await
     }
 
+    async fn fetch_replies(&self, note_id: &str, limit: u8) -> anyhow::Result<Vec<Note>> {
+        let body = RepliesRequest {
+            i: self.token.as_str(),
+            note_id,
+            limit,
+        };
+
+        self.post_json("/api/notes/replies", &body).await
+    }
+
+    async fn has_my_reply(&self, note_id: &str, my_id: &str) -> anyhow::Result<bool> {
+        let replies = self.fetch_replies(note_id, 50).await?;
+        Ok(replies.into_iter().any(|reply| reply.user.id == my_id))
+    }
+
     async fn post_reply(&self, text: &str, reply_id: &str, visibility: &str) -> anyhow::Result<()> {
         let body = CreateNoteRequest {
             i: self.token.as_str(),
@@ -477,6 +511,14 @@ struct ConversationRequest<'a> {
 #[serde(rename_all = "camelCase")]
 struct HomeTimelineRequest<'a> {
     i: &'a str,
+    limit: u8,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RepliesRequest<'a> {
+    i: &'a str,
+    note_id: &'a str,
     limit: u8,
 }
 
