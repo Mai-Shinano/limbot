@@ -24,6 +24,10 @@ pub struct Config {
     pub random_post_visibility: Option<String>,
     pub random_post_quiet_start_hour: Option<u8>,
     pub random_post_quiet_end_hour: Option<u8>,
+    pub proactive_reply_interval_sec: Option<u64>,
+    pub proactive_reply_probability_percent: Option<u8>,
+    pub proactive_reply_max_per_hour: Option<u16>,
+    pub proactive_reply_visibility: Option<String>,
     pub master_acct: String,
     pub instruction: String,
 }

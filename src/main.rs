@@ -107,6 +107,109 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    if let Some(interval_sec) = config.proactive_reply_interval_sec.filter(|v| *v > 0) {
+        let misskey = Arc::clone(&misskey);
+        let ai = Arc::clone(&ai);
+        let my_id = me.id.clone();
+        let visibility = config
+            .proactive_reply_visibility
+            .clone()
+            .unwrap_or_else(|| String::from("home"));
+        let probability_percent = config
+            .proactive_reply_probability_percent
+            .unwrap_or(35)
+            .min(100);
+        let max_per_hour = config.proactive_reply_max_per_hour.unwrap_or(4);
+        let replied_note_ids = Arc::new(Mutex::new(HashSet::<String>::new()));
+
+        tokio::spawn(async move {
+            let mut current_hour = chrono::Local::now().hour();
+            let mut hourly_count: u16 = 0;
+
+            loop {
+                tokio::time::sleep(Duration::from_secs(interval_sec)).await;
+
+                let now = chrono::Local::now();
+                if now.hour() != current_hour {
+                    current_hour = now.hour();
+                    hourly_count = 0;
+                }
+                if hourly_count >= max_per_hour {
+                    continue;
+                }
+                if !should_act_by_probability(probability_percent) {
+                    continue;
+                }
+
+                let timeline = match misskey.fetch_home_timeline(30).await {
+                    Ok(notes) => notes,
+                    Err(e) => {
+                        log::warn!("Failed to fetch home timeline for proactive reply: {e:?}");
+                        continue;
+                    }
+                };
+
+                let mut replied = replied_note_ids.lock().await;
+                let target = timeline.into_iter().find(|note| {
+                    note.user.id != my_id
+                        && note.user.is_followed.unwrap_or(false)
+                        && !note.content().trim().is_empty()
+                        && !replied.contains(&note.id)
+                });
+
+                let Some(target) = target else {
+                    continue;
+                };
+                let _ = replied.insert(target.id.clone());
+                drop(replied);
+
+                let context = misskey
+                    .fetch_conversation(&target.id)
+                    .await
+                    .map(|notes| {
+                        notes
+                            .into_iter()
+                            .filter(|ancestor| ancestor.id != target.id)
+                            .map(|ancestor| ContextMessage {
+                                name: ancestor.user.display_name(),
+                                content: ancestor.content(),
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .inspect_err(|e| log::warn!("Failed to fetch proactive context: {e:?}"))
+                    .unwrap_or_default();
+
+                let account_id = target.user.acct();
+                let display_name = target.user.display_name();
+                let content = target.content();
+
+                let reply = match ai
+                    .generate(&account_id, &display_name, &content, context)
+                    .await
+                {
+                    Ok(reply) => reply,
+                    Err(e) => {
+                        log::error!("Failed to generate proactive reply: {e:?}");
+                        continue;
+                    }
+                };
+
+                if reply.trim().is_empty() {
+                    continue;
+                }
+
+                if misskey
+                    .post_reply(&reply, &target.id, &visibility)
+                    .await
+                    .inspect_err(|e| log::error!("{e:?}"))
+                    .is_ok()
+                {
+                    hourly_count = hourly_count.saturating_add(1);
+                }
+            }
+        });
+    }
+
     let processed = Arc::new(Mutex::new(HashSet::<String>::new()));
     let mut since_id: Option<String> = None;
 
@@ -213,6 +316,22 @@ fn is_quiet_hour(hour: u8, start: u8, end: u8) -> bool {
     } else {
         hour >= start || hour < end
     }
+}
+
+fn should_act_by_probability(percent: u8) -> bool {
+    if percent == 0 {
+        return false;
+    }
+    if percent >= 100 {
+        return true;
+    }
+
+    let value = chrono::Local::now()
+        .timestamp_nanos_opt()
+        .unwrap_or_default()
+        .unsigned_abs()
+        % 100;
+    value < u64::from(percent)
 }
 
 struct MisskeyClient {
@@ -395,6 +514,8 @@ struct MisskeyUser {
     username: String,
     host: Option<String>,
     name: Option<String>,
+    #[serde(rename = "isFollowed")]
+    is_followed: Option<bool>,
 }
 
 impl MisskeyUser {

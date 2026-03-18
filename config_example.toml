@@ -23,6 +23,14 @@ openai_model = "llama-3.3-70b-versatile"
 # Optional quiet hours for autonomous posts (local time, 0-23, [start, end))
 # random_post_quiet_start_hour = 0
 # random_post_quiet_end_hour = 7
+# Optional: proactive autonomous reply from home timeline (seconds). unset to disable.
+# proactive_reply_interval_sec = 900
+# Optional: chance to reply each interval (0-100)
+# proactive_reply_probability_percent = 35
+# Optional: cap proactive replies per hour
+# proactive_reply_max_per_hour = 4
+# Optional visibility for proactive replies
+# proactive_reply_visibility = "home"
 master_acct = "your_acct"
 memory_file = "memory.json"
 instruction = """instruction to an LLM goes here..."""
