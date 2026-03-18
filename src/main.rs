@@ -44,6 +44,19 @@ async fn main() -> anyhow::Result<()> {
         &config.instruction,
     ));
 
+    let handled_note_ids = Arc::new(Mutex::new(HashSet::<String>::new()));
+    let reply_post_lock = Arc::new(Mutex::new(()));
+
+    // Preload note IDs already replied by this account to avoid duplicate replies after restart.
+    if let Ok(my_notes) = misskey.fetch_user_notes(&me.id, 200).await {
+        let mut handled = handled_note_ids.lock().await;
+        for note in my_notes {
+            if let Some(reply_id) = note.reply_id {
+                let _ = handled.insert(reply_id);
+            }
+        }
+    }
+
     if let Some(interval_sec) = config.random_post_interval_sec.filter(|v| *v > 0) {
         let misskey = Arc::clone(&misskey);
         let ai = Arc::clone(&ai);
@@ -107,13 +120,12 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    let handled_note_ids = Arc::new(Mutex::new(HashSet::<String>::new()));
-
     if let Some(interval_sec) = config.proactive_reply_interval_sec.filter(|v| *v > 0) {
         let misskey = Arc::clone(&misskey);
         let ai = Arc::clone(&ai);
         let my_id = me.id.clone();
         let handled_note_ids = Arc::clone(&handled_note_ids);
+        let reply_post_lock = Arc::clone(&reply_post_lock);
         let visibility = config
             .proactive_reply_visibility
             .clone()
@@ -200,6 +212,9 @@ async fn main() -> anyhow::Result<()> {
                     continue;
                 }
 
+                // Serialize check+post to avoid race between proactive and passive paths.
+                let _guard = reply_post_lock.lock().await;
+
                 if misskey
                     .has_my_reply(&target.id, &my_id)
                     .await
@@ -265,8 +280,9 @@ async fn main() -> anyhow::Result<()> {
                     let misskey = Arc::clone(&misskey);
                     let ai = Arc::clone(&ai);
                     let my_id = me.id.clone();
+                    let reply_post_lock = Arc::clone(&reply_post_lock);
                     tokio::spawn(async move {
-                        process(&misskey, &ai, note, &my_id).await;
+                        process(&misskey, &ai, note, &my_id, &reply_post_lock).await;
                     });
                 }
             }
@@ -279,7 +295,15 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
-async fn process(misskey: &MisskeyClient, ai: &AICore, note: Note, my_id: &str) {
+async fn process(
+    misskey: &MisskeyClient,
+    ai: &AICore,
+    note: Note,
+    my_id: &str,
+    reply_post_lock: &Mutex<()>,
+) {
+    let _guard = reply_post_lock.lock().await;
+
     if misskey
         .has_my_reply(&note.id, my_id)
         .await

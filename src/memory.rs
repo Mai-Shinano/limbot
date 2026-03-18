@@ -71,6 +71,8 @@ pub struct Person {
     pub talk_count: u32,
     pub memo: String,
     #[serde(default)]
+    pub impression: String,
+    #[serde(default)]
     pub affinity_logs: Vec<AffinityLog>,
 }
 

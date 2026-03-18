@@ -46,6 +46,7 @@ pub struct Person {
     pub affinity: i8,
     pub talk_count: u32,
     pub memo: String,
+    pub impression: String,
 }
 
 // Output from an LLM
@@ -57,6 +58,7 @@ pub struct Output {
     pub affinity_change: AffinityChange,
     pub affinity_reason: String,
     pub memo_update: MemoUpdate,
+    pub impression_update: ImpressionUpdate,
     pub response: String,
 }
 
@@ -88,6 +90,13 @@ pub enum MemoUpdateMode {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct MemoUpdate {
+    pub mode: MemoUpdateMode,
+    pub content: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ImpressionUpdate {
     pub mode: MemoUpdateMode,
     pub content: Option<String>,
 }

@@ -34,6 +34,8 @@ const SYSTEM_PROMPT_TEMPLATE: &str = r#"# 入力
 メモには、その人についての情報や、その人に対する印象や思っていることを残すようにしてください。
 ただし、メモには、発言者に関する情報のみを記録してください。発言者ではない第三者に関する情報は、検証不可と判断し、メモには残さないでください。
 
+また、impression_update では、その人に向けてあなたが抱いている総括（性格の見立て、内心、スタンス）を更新してください。
+
 応答内容は、以下に示すキャラクター設定に従い作成してください。また、好感度(-5から5)に合わせて態度を変化させるようにしてください。
 
 ## キャラクター設定"#;
@@ -98,7 +100,7 @@ impl AICore {
                     "schema": {
                         "type": "object",
                         "additionalProperties": false,
-                        "required": ["reasoning", "affinity_change", "affinity_reason", "memo_update", "response"],
+                        "required": ["reasoning", "affinity_change", "affinity_reason", "memo_update", "impression_update", "response"],
                         "properties": {
                             "reasoning": {
                                 "type": "string",
@@ -127,6 +129,23 @@ impl AICore {
                                     "content": {
                                         "type": ["string", "null"],
                                         "description": "更新後の内容 (no_changesの場合はnull)",
+                                    }
+                                },
+                            },
+                            "impression_update": {
+                                "type": "object",
+                                "description": "その人への総括（性格・内心・スタンス）の更新内容",
+                                "additionalProperties": false,
+                                "required": ["mode", "content"],
+                                "properties": {
+                                    "mode": {
+                                        "type": "string",
+                                        "enum": ["overwrite", "no_changes"],
+                                        "description": "総括の更新方法",
+                                    },
+                                    "content": {
+                                        "type": ["string", "null"],
+                                        "description": "更新後の総括本文 (no_changesの場合はnull)",
                                     }
                                 },
                             },
@@ -253,6 +272,7 @@ impl AICore {
             affinity: person.affinity.affinity(),
             talk_count: person.talk_count,
             memo: person.memo.clone(),
+            impression: person.impression.clone(),
         };
         let message_content = schema::Input {
             context,
@@ -289,6 +309,12 @@ impl AICore {
         match response.memo_update.mode {
             schema::MemoUpdateMode::Overwrite => {
                 person.memo = response.memo_update.content.unwrap_or_default();
+            }
+            schema::MemoUpdateMode::NoChanges => {}
+        }
+        match response.impression_update.mode {
+            schema::MemoUpdateMode::Overwrite => {
+                person.impression = response.impression_update.content.unwrap_or_default();
             }
             schema::MemoUpdateMode::NoChanges => {}
         }
@@ -329,6 +355,7 @@ impl AICore {
             affinity: 0,
             talk_count: 0,
             memo: String::from("自動投稿モード"),
+            impression: String::from("自動投稿モード"),
         };
         let message_content = schema::Input {
             context: Vec::new(),
