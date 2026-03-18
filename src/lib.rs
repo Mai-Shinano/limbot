@@ -36,6 +36,8 @@ const SYSTEM_PROMPT_TEMPLATE: &str = r#"# 入力
 
 また、impression_update では、その人に向けてあなたが抱いている総括（性格の見立て、内心、スタンス）を更新してください。
 
+affinity_reason と impression_update.content は必ず日本語で書いてください。
+
 応答内容は、以下に示すキャラクター設定に従い作成してください。また、好感度(-5から5)に合わせて態度を変化させるようにしてください。
 
 ## キャラクター設定"#;
@@ -113,7 +115,7 @@ impl AICore {
                             },
                             "affinity_reason": {
                                 "type": "string",
-                                "description": "好感度変化の具体的な理由。unchangedでも理由を簡潔に書く",
+                                "description": "好感度変化の具体的な理由。unchangedでも理由を簡潔に書く。必ず日本語。",
                             },
                             "memo_update": {
                                 "type": "object",
@@ -145,7 +147,7 @@ impl AICore {
                                     },
                                     "content": {
                                         "type": ["string", "null"],
-                                        "description": "更新後の総括本文 (no_changesの場合はnull)",
+                                        "description": "更新後の総括本文 (no_changesの場合はnull)。必ず日本語。",
                                     }
                                 },
                             },
