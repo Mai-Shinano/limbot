@@ -303,11 +303,22 @@ impl AICore {
         Ok(response.response)
     }
 
-    pub async fn generate_random_post(&self) -> anyhow::Result<String> {
+    pub async fn generate_random_post(
+        &self,
+        home_timeline_samples: Vec<String>,
+    ) -> anyhow::Result<String> {
         let memory = self.memory.read().await;
         let memory_snapshot = serde_json::to_string(&*memory)
             .context("Failed to serialize memory snapshot")?;
         drop(memory);
+
+        let home_timeline_samples = home_timeline_samples
+            .into_iter()
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.chars().take(280).collect::<String>())
+            .take(20)
+            .collect::<Vec<_>>();
 
         let now = Local::now();
         let seed = now.timestamp_nanos_opt().unwrap_or_default();
@@ -335,10 +346,12 @@ impl AICore {
                 json!({
                     "seed": seed,
                     "memory_json": memory_snapshot,
+                    "home_timeline_samples": home_timeline_samples,
                     "instructions": [
                         "返信文ではなく単独投稿として自然な文体で書く",
                         "毎回話題や切り口を変える",
                         "趣味の話はあまりしない",
+                        "home_timeline_samples の語彙・温度感を参考にするが、内容をコピペしない",
                         "1投稿だけ返す"
                     ]
                 }),

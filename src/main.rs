@@ -47,6 +47,7 @@ async fn main() -> anyhow::Result<()> {
     if let Some(interval_sec) = config.random_post_interval_sec.filter(|v| *v > 0) {
         let misskey = Arc::clone(&misskey);
         let ai = Arc::clone(&ai);
+        let my_id = me.id.clone();
         let visibility = config
             .random_post_visibility
             .clone()
@@ -75,7 +76,20 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
 
-                match ai.generate_random_post().await {
+                let home_timeline_samples = misskey
+                    .fetch_home_timeline(20)
+                    .await
+                    .map(|notes| {
+                        notes
+                            .into_iter()
+                            .filter(|n| n.user.id != my_id)
+                            .map(|n| n.content())
+                            .collect::<Vec<_>>()
+                    })
+                    .inspect_err(|e| log::warn!("Failed to fetch home timeline: {e:?}"))
+                    .unwrap_or_default();
+
+                match ai.generate_random_post(home_timeline_samples).await {
                     Ok(text) => {
                         if text.trim().is_empty() {
                             continue;
@@ -249,6 +263,15 @@ impl MisskeyClient {
         self.post_json("/api/notes/conversation", &body).await
     }
 
+    async fn fetch_home_timeline(&self, limit: u8) -> anyhow::Result<Vec<Note>> {
+        let body = HomeTimelineRequest {
+            i: self.token.as_str(),
+            limit,
+        };
+
+        self.post_json("/api/notes/timeline", &body).await
+    }
+
     async fn post_reply(&self, text: &str, reply_id: &str, visibility: &str) -> anyhow::Result<()> {
         let body = CreateNoteRequest {
             i: self.token.as_str(),
@@ -319,6 +342,13 @@ struct NotificationsRequest<'a> {
 struct ConversationRequest<'a> {
     i: &'a str,
     note_id: &'a str,
+    limit: u8,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HomeTimelineRequest<'a> {
+    i: &'a str,
     limit: u8,
 }
 
