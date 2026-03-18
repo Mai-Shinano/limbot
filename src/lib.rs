@@ -82,7 +82,7 @@ impl AICore {
     }
 
     async fn request(&self, message: String) -> anyhow::Result<schema::Output> {
-        let request = json!({
+        let mut request = json!({
             "model": self.model,
             "messages": [
                 {
@@ -165,6 +165,7 @@ impl AICore {
 
         let mut last_error = String::new();
         let mut body = String::new();
+        let mut used_json_object_fallback = false;
         for attempt in 0..=MAX_PROVIDER_RETRIES {
             let request_url = format!("{}/chat/completions", self.base_url);
             let mut req = self
@@ -197,6 +198,20 @@ impl AICore {
 
             let snippet: String = body.chars().take(500).collect();
             last_error = format!("Provider returned HTTP {status} at {request_url}: {snippet}");
+
+            if status.as_u16() == 400
+                && body.contains("json_validate_failed")
+                && !used_json_object_fallback
+            {
+                // Some providers reject strict schema generation even when the model content is valid enough.
+                // Fall back to json_object once, then normalize keys before deserializing.
+                request["response_format"] = json!({ "type": "json_object" });
+                used_json_object_fallback = true;
+                log::warn!(
+                    "Provider rejected strict JSON schema. Retrying with response_format=json_object"
+                );
+                continue;
+            }
 
             let is_retryable = status.as_u16() == 429 || status.is_server_error();
             if is_retryable && attempt < MAX_PROVIDER_RETRIES {
@@ -235,8 +250,11 @@ impl AICore {
             .message
             .content;
 
-        let response = serde_json::from_str(model_response_content)
+        let mut output_value: serde_json::Value = serde_json::from_str(model_response_content)
             .context("Failed to parse the response from the model")?;
+        normalize_output_value(&mut output_value);
+        let response: schema::Output = serde_json::from_value(output_value)
+            .context("Failed to deserialize normalized model output")?;
 
         log::debug!("{response:?}");
 
@@ -391,6 +409,49 @@ impl AICore {
 
         let response = self.request(message).await?;
         Ok(response.response)
+    }
+}
+
+fn normalize_output_value(v: &mut serde_json::Value) {
+    let Some(obj) = v.as_object_mut() else {
+        return;
+    };
+
+    if !obj.contains_key("reasoning") {
+        obj.insert(String::from("reasoning"), json!(""));
+    }
+    if !obj.contains_key("affinity_change") {
+        obj.insert(String::from("affinity_change"), json!("unchanged"));
+    }
+    if !obj.contains_key("affinity_reason") {
+        obj.insert(String::from("affinity_reason"), json!("変化なし"));
+    }
+    if !obj.contains_key("response") {
+        obj.insert(String::from("response"), json!(""));
+    }
+
+    let memo_update = obj
+        .entry(String::from("memo_update"))
+        .or_insert_with(|| json!({"mode":"no_changes","content":null}));
+    normalize_update_object(memo_update);
+
+    let impression_update = obj
+        .entry(String::from("impression_update"))
+        .or_insert_with(|| json!({"mode":"no_changes","content":null}));
+    normalize_update_object(impression_update);
+}
+
+fn normalize_update_object(v: &mut serde_json::Value) {
+    let Some(obj) = v.as_object_mut() else {
+        *v = json!({"mode":"no_changes","content":null});
+        return;
+    };
+
+    if !obj.contains_key("mode") {
+        obj.insert(String::from("mode"), json!("no_changes"));
+    }
+    if !obj.contains_key("content") {
+        obj.insert(String::from("content"), serde_json::Value::Null);
     }
 }
 
