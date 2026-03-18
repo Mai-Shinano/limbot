@@ -107,10 +107,13 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    let handled_note_ids = Arc::new(Mutex::new(HashSet::<String>::new()));
+
     if let Some(interval_sec) = config.proactive_reply_interval_sec.filter(|v| *v > 0) {
         let misskey = Arc::clone(&misskey);
         let ai = Arc::clone(&ai);
         let my_id = me.id.clone();
+        let handled_note_ids = Arc::clone(&handled_note_ids);
         let visibility = config
             .proactive_reply_visibility
             .clone()
@@ -120,7 +123,6 @@ async fn main() -> anyhow::Result<()> {
             .unwrap_or(35)
             .min(100);
         let max_per_hour = config.proactive_reply_max_per_hour.unwrap_or(4);
-        let replied_note_ids = Arc::new(Mutex::new(HashSet::<String>::new()));
 
         tokio::spawn(async move {
             let mut current_hour = chrono::Local::now().hour();
@@ -149,7 +151,7 @@ async fn main() -> anyhow::Result<()> {
                     }
                 };
 
-                let mut replied = replied_note_ids.lock().await;
+                let mut replied = handled_note_ids.lock().await;
                 let target = timeline.into_iter().find(|note| {
                     note.user.id != my_id
                         && note.user.is_followed.unwrap_or(false)
@@ -239,6 +241,13 @@ async fn main() -> anyhow::Result<()> {
                     }
                     let _ = processed.insert(note.id.clone());
                     drop(processed);
+
+                    let mut handled = handled_note_ids.lock().await;
+                    if handled.contains(&note.id) {
+                        continue;
+                    }
+                    let _ = handled.insert(note.id.clone());
+                    drop(handled);
 
                     if note.user.id == me.id {
                         continue;
