@@ -55,6 +55,7 @@ pub struct Person {
 pub struct Output {
     pub reasoning: String,
     pub affinity_change: AffinityChange,
+    pub affinity_reason: String,
     pub memo_update: MemoUpdate,
     pub response: String,
 }
@@ -65,6 +66,16 @@ pub enum AffinityChange {
     Up,
     Down,
     Unchanged,
+}
+
+impl AffinityChange {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Up => "up",
+            Self::Down => "down",
+            Self::Unchanged => "unchanged",
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]

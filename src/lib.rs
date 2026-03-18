@@ -29,6 +29,8 @@ const SYSTEM_PROMPT_TEMPLATE: &str = r#"# 入力
 
 別途与えられたスキーマに従い、思考内容、好感度の変動、メモの更新、応答内容を出力してください。
 
+好感度を変動させる場合は、なぜ変動したかを具体的に説明してください。
+
 メモには、その人についての情報や、その人に対する印象を残すようにしてください。
 メモには、発言者に関する情報のみを記録してください。発言者ではない第三者に関する情報は、検証不可と判断し、メモには残さないでください。
 
@@ -96,7 +98,7 @@ impl AICore {
                     "schema": {
                         "type": "object",
                         "additionalProperties": false,
-                        "required": ["reasoning", "affinity_change", "memo_update", "response"],
+                        "required": ["reasoning", "affinity_change", "affinity_reason", "memo_update", "response"],
                         "properties": {
                             "reasoning": {
                                 "type": "string",
@@ -106,6 +108,10 @@ impl AICore {
                                 "type": "string",
                                 "enum": ["up", "down", "unchanged"],
                                 "description": "好感度の内部値を変化させるかどうか",
+                            },
+                            "affinity_reason": {
+                                "type": "string",
+                                "description": "好感度変化の具体的な理由。unchangedでも理由を簡潔に書く",
                             },
                             "memo_update": {
                                 "type": "object",
@@ -262,10 +268,23 @@ impl AICore {
 
         let mut memory = self.memory.write().await;
         let person = memory.get_mut(account_id).unwrap();
+        let affinity_before = person.affinity.affinity();
         match response.affinity_change {
             schema::AffinityChange::Up => person.affinity.tick_positive(),
             schema::AffinityChange::Down => person.affinity.tick_negative(),
             schema::AffinityChange::Unchanged => {}
+        }
+        let affinity_after = person.affinity.affinity();
+        let affinity_reason = response.affinity_reason.trim();
+        if !affinity_reason.is_empty()
+            && !matches!(response.affinity_change, schema::AffinityChange::Unchanged)
+        {
+            person.push_affinity_log(
+                response.affinity_change.as_str(),
+                affinity_reason.to_owned(),
+                affinity_before,
+                affinity_after,
+            );
         }
         match response.memo_update.mode {
             schema::MemoUpdateMode::Overwrite => {

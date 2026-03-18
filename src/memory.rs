@@ -70,6 +70,8 @@ pub struct Person {
     pub affinity: Affinity,
     pub talk_count: u32,
     pub memo: String,
+    #[serde(default)]
+    pub affinity_logs: Vec<AffinityLog>,
 }
 
 impl Person {
@@ -89,6 +91,32 @@ impl Person {
 
         self.talk_count += 1;
     }
+
+    pub fn push_affinity_log(&mut self, change: &str, reason: String, before: i8, after: i8) {
+        const MAX_AFFINITY_LOGS: usize = 100;
+
+        self.affinity_logs.push(AffinityLog {
+            timestamp: Utc::now(),
+            change: change.to_owned(),
+            before,
+            after,
+            reason,
+        });
+
+        if self.affinity_logs.len() > MAX_AFFINITY_LOGS {
+            let overflow = self.affinity_logs.len() - MAX_AFFINITY_LOGS;
+            self.affinity_logs.drain(0..overflow);
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct AffinityLog {
+    pub timestamp: DateTime<Utc>,
+    pub change: String,
+    pub before: i8,
+    pub after: i8,
+    pub reason: String,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
